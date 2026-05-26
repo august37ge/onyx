@@ -17,7 +17,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-onyx}", "-d", "${POSTGRES_DB:-onyx}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-onyx} -d ${POSTGRES_DB:-onyx}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -78,7 +78,7 @@ services:
       - GEN_AI_MODEL_PROVIDER=${GEN_AI_MODEL_PROVIDER:-}
       - GEN_AI_MODEL_VERSION=${GEN_AI_MODEL_VERSION:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
     ports:
       - "8080:8080"
     volumes:
@@ -104,38 +104,4 @@ services:
       - POSTGRES_HOST=relational_db
       - POSTGRES_USER=${POSTGRES_USER:-onyx}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-onyx}
-      - POSTGRES_DB=${POSTGRES_DB:-onyx}
-      - VESPA_HOST=index
-      - REDIS_HOST=cache
-      - SECRET_JWT_KEY=${SECRET_JWT_KEY:-local-dev-secret-change-in-prod}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-    volumes:
-      - ./backend:/app/backend
-      - model_cache:/root/.cache/huggingface
-
-  # Next.js frontend
-  web_server:
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      - api_server
-    environment:
-      - INTERNAL_URL=http://api_server:8080
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-local-dev-secret}
-      - NEXT_PUBLIC_DISABLE_STREAMING=${NEXT_PUBLIC_DISABLE_STREAMING:-false}
-    ports:
-      - "3000:3000"
-
-volumes:
-  postgres_data:
-  vespa_data:
-  redis_data:
-  model_cache:
-
-networks:
-  default:
-    name: onyx_network
+      - POSTGRES_DB=${POSTGRES_DB}
