@@ -1,0 +1,141 @@
+version: '3.8'
+
+# Onyx development environment
+# Mirrors the upstream onyx-dot-app/onyx architecture with local customizations
+
+services:
+  # PostgreSQL database
+  relational_db:
+    image: postgres:15.2-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-onyx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-onyx}
+      POSTGRES_DB: ${POSTGRES_DB:-onyx}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-onyx}", "-d", "${POSTGRES_DB:-onyx}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Vespa vector search engine
+  index:
+    image: vespaengine/vespa:8.277.17
+    restart: unless-stopped
+    ports:
+      - "19071:19071"
+      - "8081:8081"
+    volumes:
+      - vespa_data:/opt/vespa/var
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:19071/state/v1/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # Redis for caching and task queuing
+  cache:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Onyx API backend
+  api_server:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      relational_db:
+        condition: service_healthy
+      index:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    environment:
+      - AUTH_TYPE=${AUTH_TYPE:-disabled}
+      - POSTGRES_HOST=relational_db
+      - POSTGRES_USER=${POSTGRES_USER:-onyx}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-onyx}
+      - POSTGRES_DB=${POSTGRES_DB:-onyx}
+      - VESPA_HOST=index
+      - REDIS_HOST=cache
+      - SECRET_JWT_KEY=${SECRET_JWT_KEY:-local-dev-secret-change-in-prod}
+      - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
+      - GEN_AI_MODEL_PROVIDER=${GEN_AI_MODEL_PROVIDER:-}
+      - GEN_AI_MODEL_VERSION=${GEN_AI_MODEL_VERSION:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend:/app/backend
+      - model_cache:/root/.cache/huggingface
+
+  # Background task worker (Celery)
+  background:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      relational_db:
+        condition: service_healthy
+      index:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    command: /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+    environment:
+      - AUTH_TYPE=${AUTH_TYPE:-disabled}
+      - POSTGRES_HOST=relational_db
+      - POSTGRES_USER=${POSTGRES_USER:-onyx}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-onyx}
+      - POSTGRES_DB=${POSTGRES_DB:-onyx}
+      - VESPA_HOST=index
+      - REDIS_HOST=cache
+      - SECRET_JWT_KEY=${SECRET_JWT_KEY:-local-dev-secret-change-in-prod}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ./backend:/app/backend
+      - model_cache:/root/.cache/huggingface
+
+  # Next.js frontend
+  web_server:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api_server
+    environment:
+      - INTERNAL_URL=http://api_server:8080
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-local-dev-secret}
+      - NEXT_PUBLIC_DISABLE_STREAMING=${NEXT_PUBLIC_DISABLE_STREAMING:-false}
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  vespa_data:
+  redis_data:
+  model_cache:
+
+networks:
+  default:
+    name: onyx_network
